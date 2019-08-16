@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <title>天地图演示</title>
+    <script type="text/javascript" src="http://api.tianditu.gov.cn/api?v=4.0&tk=d01e2d5082c2d38552c735dcd94f8f97"></script>
+    <script src="https://apps.bdimg.com/libs/jquery/2.1.4/jquery.min.js"></script>
+    <style type="text/css">body,html{width:100%;height:100%;margin:0;font-family:"Microsoft YaHei"}#mapDiv{width:100%;height:100%;}input,b,p{margin-left:5px;font-size:14px}</style>
+</head>
+<body onLoad="onLoad()">
+<div style="height: 30px; display: inline-block;">
+    <input type="button" value="开启画线" onClick="lineTool.open();"/>
+    <input type="button" value="关闭" onClick="lineTool.close();"/>
+    <input type="button" value="添加标注" onClick="$('#icons').css('display','inline-block');"/>
+    <input type="button" value="关 闭" onClick="$('#icons').css('display','none');(markerTool ? markerTool.close():'');"/>
+    <input type="button" value="选取区域" onClick="rectTool.open();"/>
+    <input type="button" value="关闭" onClick="rectTool.close();"/>
+</div>
+<div id="icons" style="height: 30px; width: 600px; margin-left: 200px; display: none;">
+    选择标注图标：
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850832.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850834.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850835.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850840.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850841.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850844.png" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850850.ico" width="30"/>
+    <img style="cursor: pointer;" src="../static/icon/ooopic_1565850858.ico" width="30"/>
+</div>
+<div id="box" style="height: 30px; width: 600px; margin-left: 200px; display: none;">
+    选择颜色：
+    <select id="select">
+        <option value="#0042a4">默认</option>
+        <option value="red">red</option>
+        <option value="green">green</option>
+        <option value="blue">blue</option>
+        <option value="yellow">yellow</option>
+        <option value="black">black</option>
+        <option value="magenta">magenta</option>
+        <option value="chocolate">chocolate</option>
+    </select>
+    设置宽度：<input id="input" type="text"/>
+    <button type="button" onclick="setStyle()"> 确认 </button>
+    <button type="button" onclick="removeSelectedPolyline()"> 删除 </button>
+</div>
+    <div id="mapDiv"></div>
+<script>
+    var zoom = 15,map,lineTool,markerTool,rectTool;
+
+    var data = new Array(); // 存放要画的线的数据
+    var lineList = new Array(); // 记录要绘制的线
+    var arrowLineList = new Array(); // 记录绘制的箭头线
+    function onLoad() {
+        // 模拟数据，每个数组都是一组起始经纬度和结束经纬度，数组下标为0的表示该线的颜色，如果为空或者为null则为默认颜色，如果为selected则是选中状态，
+        // 下标为1的表示线的宽度，数组第一个和第二下标必须要有，数组下标为2和3的则是起始点的经纬度，下标为4和5的则是终点的经纬度
+        data = [
+            ['',3,116.39058,39.92187,116.39079,39.91578],
+            ['',3,116.39079,39.91578,116.38418,39.91568],
+            ['',3,116.39079,39.91578,116.398,39.91585],
+            ['',3,116.39075,39.91572,116.39101,39.91134],
+            ['',3,116.39101,39.91134,116.39843,39.9116],
+            ['',3,116.39101,39.91134,116.3856,39.91121]
+        ];
+
+        //初始化地图对象
+        map = new T.Map("mapDiv");
+        //设置显示地图的中心点和级别
+        map.centerAndZoom(new T.LngLat(116.39079,39.91578),zoom);
+
+        //注册地图的缩放事件
+        map.addEventListener("zoomend",function(){
+            // 重新加载数据，线的箭头随地图大小切换
+            init(data);
+        });
+
+        // 画线工具
+        lineTool = new T.PolylineTool(map);
+        // 画线完成之后的触发事件
+        lineTool.addEventListener("draw",onDrawLine);
+
+        // 选取框的样式
+        let style = {
+            color: 'blue',
+            weight: '2',
+            opacity: '0.5',
+            fillColor: '#FFF',
+            fillOpacity: '0.6',
+            lineStyle: 'dashed'
+        }
+        // 创建矩形工具对象，（选取区域功能）
+        rectTool = new T.RectangleTool(map,style);
+        // 选取区域完成之后的触发事件
+        rectTool.addEventListener("draw",onDrawRect);
+
+        // 为标注图标创建点击事件
+        $("#icons img").on("click",setMarkerIcon);
+        init(data);
+    }
+
+    // 在地图上画线
+    function onDrawLine(p){
+        let lnglats = p.currentLnglats;
+        let polyline = p.currentPolyline;
+        // 判断上次画的所有线的结束点和当前画的线的起始点距离
+        let lastPolyline = [];
+        let nowPolyline = lnglats[0];
+        let flag = false;
+        if(data.length > 0){ // 如果地图上有线才做距离判断
+            data.forEach(item => {
+                let a = new T.LngLat(item[4],item[5]);
+                let b = new T.LngLat(nowPolyline.getLng(),nowPolyline.getLat());
+                let distance = a.distanceTo(b,6378.137);
+                // 如果线之间的距离小于50米，则将该线的结束点作为当前画的线的起始点
+                if(distance < 50){
+                    lastPolyline = item;
+                }
+
+                // 判断之前的线和当前画的线是否有交集
+                let pts = [new T.LngLat(item[2],item[3]) // 起始点
+                    ,new T.LngLat(item[4],item[5]) // 结束点
+                ];
+                let mPolyline = new T.Polyline(pts);
+                let bounds = polyline.getBounds();
+                if(bounds.intersects(mPolyline.getBounds())){
+                    console.log(bounds);
+                    console.log(mPolyline.getBounds());
+                    flag =  true;
+                }
+            });
+        }
+        if(flag){
+            alert("当前画的线和之前画的线出现交叉点");
+        }
+        // 添加动态画的线，并重新加载data数组
+        for(let i=1;i<lnglats.length; i++){
+            if(i == 1 && lastPolyline.length > 0){
+                data.push([null,null,lastPolyline[4],lastPolyline[5],lnglats[1].getLng(),lnglats[1].getLat()]);
+            }else{
+                data.push([null,null,lnglats[i-1].getLng(),lnglats[i-1].getLat(),lnglats[i].getLng(),lnglats[i].getLat()]);
+            }
+        }
+        map.removeOverLay(p.currentPolyline);
+        // 关闭画线工具
+        lineTool.close();
+        init(data);
+    }
+    // 获取选中区域中的线
+    function onDrawRect(p) {
+        map.removeOverLay(p.currentRectangle);
+        let bounds = p.currentBounds;
+        //关闭矩形工具体
+        rectTool.close();
+        data.forEach((item) => {
+            let lnglat1 = new T.LngLat(item[2],item[3]);
+            let lnglat2 = new T.LngLat(item[4],item[5]);
+            let lngLatBounds = new T.LngLatBounds(lnglat1,lnglat2);
+            // 判断选中的区域和所有数据是否有交集，如果当前数据有交集则说明选中了该条数据（线）
+            if(bounds.intersects(lngLatBounds) || bounds.contains(lnglat1) || bounds.contains(lnglat2)){
+                item[0] = "selected"; // 将该条数据设置为选中状态
+                item[1] = 3;
+            }
+        });
+        init(data);
+        $("#box").css("display","inline-block");
+    }
+    // 设置选中状态的线的样式
+    function setStyle(){
+        let color = $("#select option:selected").val();
+        let width = $("#input").val();
+        data.forEach((item) => {
+            if(item[0] == "selected"){
+                item[0] = color;
+                item[1] = width;
+            }
+        });
+        init(data);
+        $("#box").css("display","none");
+    }
+    // 删除选中的线
+    function removeSelectedPolyline(){
+        if(confirm('确定要删除选中的线吗?')){
+            for(let i=data.length-1;i>=0;i--){
+                if(data[i][0] == "selected"){
+                    data.splice(i,1);
+                }
+            }
+            init(data);
+            $("#box").css("display","none");
+        }
+    }
+    // 设置标注图标，并打开标注工具
+    function setMarkerIcon(){
+        let path = $(this).attr("src");
+        //创建图片对象
+        let icon = new T.Icon({
+            iconUrl: path,
+            iconSize: new T.Point(30, 30),
+            iconAnchor: new T.Point(15, 25)
+        });
+        //创建标注工具对象
+        markerTool = new T.MarkTool(map, {icon:icon,follow: true});
+        markerTool.open();
+        // 为标注创建点击事件
+        markerTool.addEventListener("mouseup",p => {
+            p.currentMarker.addEventListener("click",removeMarker);
+        });
+    }
+    // 删除标注
+    function removeMarker(){
+        if(confirm('确定要删除该标注吗?')){
+            map.removeOverLay(this);
+        }
+    }
+
+    // 初始化地图画线
+    function init(data){
+        // 清除所有的线
+        lineList.forEach(function(item){
+            map.removeOverLay(item);
+        });
+        // 清除所有的箭头
+        arrowLineList.forEach(function(item){
+            map.removeOverLay(item);
+        });
+        lineList = [];
+        arrowLineList = [];
+        data.forEach((item) => {
+            let pts = [new T.LngLat(item[2],item[3]) // 起始点
+                      ,new T.LngLat(item[4],item[5]) // 结束点
+            ];
+            // 初始线的样式
+            let style = {
+                weight: (item[1] <= 0 ? 3: item[1]),  // 折线的宽度，以像素为单位
+                opacity: 1,                           // 折线的透明度，取值范围0 - 1
+                color: (item[0] ? item[0]:"#0042a4"), // 折线颜色
+                lineStyle:"solid",                    // 折线的样式，solid或dashed
+            };
+            // 被选中的样式
+            if(item[0] == "selected"){
+                style.color = 'red';
+                style.weight = '4';
+                style.opacity = '0.5';
+                style.lineStyle = 'dashed';
+            }
+
+            let arrowLineStyle = [style.color,(style.weight-1 <= 1 ? 1:style.weight-1),style.opacity];
+            // 创建线对象
+            let polyline = new T.Polyline(pts,style);
+            map.addOverLay(polyline);
+            lineList[lineList.length] = polyline; // 记录要绘制的线
+            arrowLineList[arrowLineList.length] = addArrow(polyline,(item[1] * 2 <10 ? 10:item[1] * 2),Math.PI/7,arrowLineStyle);// 记录绘制的箭头线
+        });
+    }
+    // 画箭头
+    function addArrow(polyline,length,angleValue,arrowLineStyle){ // 绘制箭头的函数
+        var linePoint = polyline.getLngLats(); // 线的坐标串
+        var arrowCount = linePoint.length;
+        for(var i =1;i<arrowCount;i++){ //在拐点处绘制箭头
+            var pixelStart = map.lngLatToContainerPoint(linePoint[i-1]);
+            var pixelEnd = map.lngLatToContainerPoint(linePoint[i]);
+            var angle = angleValue; // 箭头和主线的夹角
+            var r = length; // r/Math.sin(angle)代表箭头长度
+            var delta = 0; // 主线斜率，垂直时无斜率
+            var param = 0; // 代码简洁考虑
+            var pixelTemX,pixelTemY; // 临时点坐标
+            var pixelX,pixelY,pixelX1,pixelY1; // 箭头两个点
+            if(pixelEnd.x - pixelStart.x == 0){ // 斜率不存在是时
+                pixelTemX = pixelEnd.x;
+                if(pixelEnd.y > pixelStart.y) {
+                    pixelTemY = pixelEnd.y - r;
+                }else {
+                    pixelTemY = pixelEnd.y + r;
+                }
+                // 已知直角三角形两个点坐标及其中一个角，求另外一个点坐标算法
+                pixelX = pixelTemX - r * Math.tan(angle);
+                pixelX1 = pixelTemX + r * Math.tan(angle);
+                pixelY = pixelY1 = pixelTemY;
+            }else { // 斜率存在时
+                delta = (pixelEnd.y - pixelStart.y) / (pixelEnd.x - pixelStart.x);
+                param = Math.sqrt(delta * delta + 1);
+                if((pixelEnd.x - pixelStart.x) < 0){ // 第二、三象限
+                    pixelTemX = pixelEnd.x + r / param;
+                    pixelTemY = pixelEnd.y + delta * r / param;
+                }else { // 第一、四象限
+                    pixelTemX = pixelEnd.x - r / param;
+                    pixelTemY = pixelEnd.y - delta * r / param;
+                }
+                // 已知直角三角形两个点坐标及其中一个角，求另外一个点坐标算法
+                pixelX = pixelTemX + Math.tan(angle) * r * delta / param;
+                pixelY = pixelTemY - Math.tan(angle) * r / param;
+                pixelX1 = pixelTemX - Math.tan(angle) * r * delta / param;
+                pixelY1 = pixelTemY + Math.tan(angle) * r / param;
+            }
+            var pointArrow = map.containerPointToLngLat(new T.Point(pixelX,pixelY));
+            var pointArrow1 = map.containerPointToLngLat(new T.Point(pixelX1,pixelY1));
+            var Arrow = new T.Polyline([
+                pointArrow,
+                linePoint[i],
+                pointArrow1
+            ], {color:arrowLineStyle[0], weight:arrowLineStyle[1], opacity:arrowLineStyle[2]});
+            map.addOverLay(Arrow);
+            return Arrow;
+        }
+    }
+
+</script>
+</body>
+</html>
